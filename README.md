@@ -4,6 +4,8 @@ Press both ⌘ keys in any Mac app. Claude Code gets a screenshot of that window
 
 It works like the Appshots feature in OpenAI's Codex app, as a Claude Code plugin. This is a community plugin, not made by Anthropic.
 
+![Pressing both ⌘ keys in Safari sends the window to Claude Code](docs/demo.gif)
+
 ## What you get
 
 - The window's screenshot, pasted into the prompt box of the Claude desktop app as a normal image attachment.
