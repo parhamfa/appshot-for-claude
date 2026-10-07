@@ -14,6 +14,6 @@ export type Appshot = {
 
 declare module 'claude-code' {
   interface PluginState {
-    appshot: { pending: Appshot[]; shown: string | null }
+    'appshot-for-claude': { pending: Appshot[]; shown: string | null }
   }
 }

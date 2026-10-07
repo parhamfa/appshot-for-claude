@@ -14,8 +14,8 @@ import { formatAppshot, labelFor } from './appshot-core'
 // band goes. Pressed over Claude itself, the hotkey takes the app used before
 // Claude.
 
-const pending = atom({ plugin: 'appshot', key: 'pending' } as const, [])
-const shown = atom({ plugin: 'appshot', key: 'shown' } as const, null)
+const pending = atom({ plugin: 'appshot-for-claude', key: 'pending' } as const, [])
+const shown = atom({ plugin: 'appshot-for-claude', key: 'shown' } as const, null)
 
 // State outlives a reload: a value an earlier version of this mod stored
 // under `pending` (null, one appshot) is read as a list all the same.

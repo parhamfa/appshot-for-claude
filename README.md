@@ -1,8 +1,8 @@
-# Appshot for Claude Code
+# Appshot for Claude
 
 Press both ⌘ keys in any Mac app. Claude Code gets a screenshot of that window and its text, ready to go with your next message.
 
-It works like the Appshots feature in OpenAI's Codex app, as a Claude Code plugin.
+It works like the Appshots feature in OpenAI's Codex app, as a Claude Code plugin. This is a community plugin, not made by Anthropic.
 
 ## What you get
 
@@ -23,8 +23,8 @@ You can capture several windows before sending. They all go with your next messa
 In Claude Code:
 
 ```
-/plugin marketplace add parhamfa/appshot
-/plugin install appshot@appshot
+/plugin marketplace add parhamfa/appshot-for-claude
+/plugin install appshot-for-claude@appshot-for-claude
 ```
 
 Then start a new session. The first time it runs, macOS asks you to give Claude two permissions in System Settings → Privacy & Security:
@@ -78,7 +78,7 @@ One helper runs per Mac. It is compiled to `~/.claude/appshots/bin/` on first us
 ## Uninstall
 
 ```
-/plugin uninstall appshot@appshot
+/plugin uninstall appshot-for-claude@appshot-for-claude
 ```
 
 To also remove the helper and saved captures, delete `~/.claude/appshots`.
