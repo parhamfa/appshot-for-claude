@@ -42,7 +42,7 @@ Then start a new session. The first time it runs, macOS asks you to give Claude 
 
 With several sessions open, captures go to the one you last sent a message from. Run `/appshot` in a session to send captures there and to check the helper's status.
 
-In the desktop app, a conversation that hasn't sent its first message yet has no Claude Code process. A capture made while you look at it shows up in the bar of the session you last used. The screenshot still lands in the prompt box in front of you. When you send that conversation's first message with the screenshot in it, the text comes along, and the other session's bar drops it.
+In the desktop app, a conversation that hasn't sent its first message yet has no Claude Code process. A capture made while you look at it shows up in the bar of the session you last used. The screenshot still lands in the prompt box in front of you. When you send that conversation's first message with the screenshot in it, within 30 minutes of the capture, the text comes along, and the other session's bar drops it. After that the text stays with the other session.
 
 ## What Claude receives
 

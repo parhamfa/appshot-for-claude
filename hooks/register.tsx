@@ -20,7 +20,8 @@ import type { HandoffCandidate } from './appshot-core'
 // in the band of the session last used, while its screenshot is pasted into
 // the composer in front. The pasted screenshot marks where the text should go:
 // a prompt carrying more images than its own pasted appshots claims the newest
-// pasted, unsent captures, and the other session's band drops them.
+// unsent captures pasted within the last half hour, and the other session's
+// band drops them. Older ones stay with the session that holds them.
 
 const pending = atom({ plugin: 'appshot-for-claude', key: 'pending' } as const, [])
 const shown = atom({ plugin: 'appshot-for-claude', key: 'shown' } as const, null)
@@ -39,7 +40,7 @@ const PANE_CHARS = 60_000
 
 type Meta = Omit<Appshot, 'token'> & { target?: string }
 // Markers beside a capture's files, so every session sees where it went.
-type Delivered = { sessionId?: string; isPasted?: boolean }
+type Delivered = { sessionId?: string; isPasted?: boolean; at?: number }
 type Done = { sessionId?: string; how?: 'sent' | 'removed' }
 
 // Terminal apps by TERM_PROGRAM, to bring the right one forward on capture.
@@ -262,8 +263,8 @@ async function contextFor($: EngineInterface, shot: Appshot): Promise<string> {
 }
 
 // Captures another session holds whose screenshots this prompt carries: of
-// the newest ten, the pasted, unsent ones, one per image the prompt's own
-// appshots leave unexplained.
+// the newest ten, the unsent ones pasted within the window, one per image the
+// prompt's own appshots leave unexplained.
 async function claimHandoff($: EngineInterface, own: readonly Appshot[], images: number, ownPasted: number): Promise<Appshot[]> {
   const names = (await $.fs.list(captures()))
     .filter(entry => entry.kind === 'dir' && !own.some(shot => shot.id === entry.name))
@@ -281,10 +282,11 @@ async function claimHandoff($: EngineInterface, own: readonly Appshot[], images:
     ])
     if (meta === undefined || delivered === undefined) return undefined
     metas.set(id, meta)
-    return { id, isPasted: delivered.isPasted === true, isDone }
+    return { id, isPasted: delivered.isPasted === true, isDone, deliveredAt: delivered.at ?? 0 }
   }))
   const candidates = found.filter((one): one is HandoffCandidate => one !== undefined)
-  return chooseHandoff(candidates, images, ownPasted).flatMap(id => {
+  const now = await $.clock.now()
+  return chooseHandoff(candidates, images, ownPasted, now).flatMap(id => {
     const meta = metas.get(id)
     return meta === undefined ? [] : [{ ...shotFor(meta), isPasted: true }]
   })

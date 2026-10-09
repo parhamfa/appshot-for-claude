@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { chooseHandoff, formatAppshot, INLINE_CHARS, labelFor } from '../hooks/appshot-core'
+import { chooseHandoff, formatAppshot, HANDOFF_WINDOW_MS, INLINE_CHARS, labelFor } from '../hooks/appshot-core'
 
 const shot = {
   id: '20261007-120000-000-Safari',
@@ -32,15 +32,19 @@ test('the model gets the screenshot path and the window text, cut when long', ()
   expect(long).toContain(`first ${INLINE_CHARS} of ${INLINE_CHARS + 5} characters`)
 })
 
+// Delivery times for the handoff tests: `now` and a minute before it.
+const now = 1_791_544_404_104
+const fresh = now - 60_000
+
 test('a prompt claims the newest pasted, unsent captures its own appshots do not explain', () => {
   const candidates = [
-    { id: '20261009-141000-000-Safari', isPasted: true, isDone: false },
-    { id: '20261009-141200-000-Notes', isPasted: true, isDone: false },
-    { id: '20261009-141100-000-Mail', isPasted: true, isDone: false },
+    { id: '20261009-141000-000-Safari', isPasted: true, isDone: false, deliveredAt: fresh },
+    { id: '20261009-141200-000-Notes', isPasted: true, isDone: false, deliveredAt: fresh },
+    { id: '20261009-141100-000-Mail', isPasted: true, isDone: false, deliveredAt: fresh },
   ]
-  expect(chooseHandoff(candidates, 1, 0)).toEqual(['20261009-141200-000-Notes'])
-  expect(chooseHandoff(candidates, 3, 1)).toEqual(['20261009-141200-000-Notes', '20261009-141100-000-Mail'])
-  expect(chooseHandoff(candidates, 5, 0)).toEqual([
+  expect(chooseHandoff(candidates, 1, 0, now)).toEqual(['20261009-141200-000-Notes'])
+  expect(chooseHandoff(candidates, 3, 1, now)).toEqual(['20261009-141200-000-Notes', '20261009-141100-000-Mail'])
+  expect(chooseHandoff(candidates, 5, 0, now)).toEqual([
     '20261009-141200-000-Notes',
     '20261009-141100-000-Mail',
     '20261009-141000-000-Safari',
@@ -48,20 +52,28 @@ test('a prompt claims the newest pasted, unsent captures its own appshots do not
 })
 
 test('no spare image claims nothing', () => {
-  const candidates = [{ id: '20261009-141000-000-Safari', isPasted: true, isDone: false }]
-  expect(chooseHandoff(candidates, 1, 1)).toEqual([])
-  expect(chooseHandoff(candidates, 1, 2)).toEqual([])
-  expect(chooseHandoff(candidates, 0, 0)).toEqual([])
+  const candidates = [{ id: '20261009-141000-000-Safari', isPasted: true, isDone: false, deliveredAt: fresh }]
+  expect(chooseHandoff(candidates, 1, 1, now)).toEqual([])
+  expect(chooseHandoff(candidates, 1, 2, now)).toEqual([])
+  expect(chooseHandoff(candidates, 0, 0, now)).toEqual([])
 })
 
 test('captures not pasted or already done are never claimed', () => {
   const candidates = [
-    { id: '20261009-141300-000-Notes', isPasted: false, isDone: false },
-    { id: '20261009-141200-000-Mail', isPasted: true, isDone: true },
-    { id: '20261009-141100-000-Safari', isPasted: true, isDone: false },
+    { id: '20261009-141300-000-Notes', isPasted: false, isDone: false, deliveredAt: fresh },
+    { id: '20261009-141200-000-Mail', isPasted: true, isDone: true, deliveredAt: fresh },
+    { id: '20261009-141100-000-Safari', isPasted: true, isDone: false, deliveredAt: fresh },
   ]
-  expect(chooseHandoff(candidates, 3, 0)).toEqual(['20261009-141100-000-Safari'])
-  expect(chooseHandoff(candidates.slice(0, 2), 2, 0)).toEqual([])
+  expect(chooseHandoff(candidates, 3, 0, now)).toEqual(['20261009-141100-000-Safari'])
+  expect(chooseHandoff(candidates.slice(0, 2), 2, 0, now)).toEqual([])
+})
+
+test('a capture pasted more than 30 minutes ago stays with the session that holds it', () => {
+  const atTheEdge = { id: '20261009-141200-000-Notes', isPasted: true, isDone: false, deliveredAt: now - HANDOFF_WINDOW_MS }
+  const tooOld = { id: '20261009-141300-000-Mail', isPasted: true, isDone: false, deliveredAt: now - HANDOFF_WINDOW_MS - 1 }
+  const unmarked = { id: '20261009-141400-000-Safari', isPasted: true, isDone: false, deliveredAt: 0 }
+  expect(HANDOFF_WINDOW_MS).toBe(30 * 60_000)
+  expect(chooseHandoff([tooOld, atTheEdge, unmarked], 3, 0, now)).toEqual(['20261009-141200-000-Notes'])
 })
 
 test('a prompt with no appshot waiting passes through untouched', async ($, on) => {
