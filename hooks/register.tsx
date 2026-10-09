@@ -3,7 +3,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Appshot } from '../types'
 
-import { formatAppshot, labelFor } from './appshot-core'
+import { chooseHandoff, formatAppshot, labelFor } from './appshot-core'
+import type { HandoffCandidate } from './appshot-core'
 
 // Press both Command keys anywhere on the Mac: a helper captures the front
 // window (screenshot + accessibility text) into ~/.claude/appshots/captures,
@@ -13,6 +14,13 @@ import { formatAppshot, labelFor } from './appshot-core'
 // each; the next prompt the person sends carries every pending text, and the
 // band goes. Pressed over Claude itself, the hotkey takes the app used before
 // Claude.
+//
+// The desktop app starts a conversation's process only with its first
+// message, so a capture made while looking at an unstarted conversation lands
+// in the band of the session last used, while its screenshot is pasted into
+// the composer in front. The pasted screenshot marks where the text should go:
+// a prompt carrying more images than its own pasted appshots claims the newest
+// pasted, unsent captures, and the other session's band drops them.
 
 const pending = atom({ plugin: 'appshot-for-claude', key: 'pending' } as const, [])
 const shown = atom({ plugin: 'appshot-for-claude', key: 'shown' } as const, null)
@@ -30,6 +38,9 @@ const TEXT_PANE = 'appshot-text'
 const PANE_CHARS = 60_000
 
 type Meta = Omit<Appshot, 'token'> & { target?: string }
+// Markers beside a capture's files, so every session sees where it went.
+type Delivered = { sessionId?: string; isPasted?: boolean }
+type Done = { sessionId?: string; how?: 'sent' | 'removed' }
 
 // Terminal apps by TERM_PROGRAM, to bring the right one forward on capture.
 const TERMINALS: Record<string, string> = {
@@ -56,6 +67,36 @@ function captures() {
 }
 function binary() {
   return `${s.root}/bin/appshot-helper`
+}
+
+// A prompt can arrive before session.start has finished; every hook that
+// needs the paths fills them first.
+async function ready($: EngineInterface) {
+  if (!s.root) s.root = `${await $.env.get('HOME')}/.claude/appshots`
+  if (!s.sessionId) s.sessionId = await $.session.id()
+}
+
+async function readJson<T>($: EngineInterface, path: string): Promise<T | undefined> {
+  try {
+    return JSON.parse(await $.fs.read(path)) as T
+  } catch {
+    return undefined
+  }
+}
+
+async function writeMarker($: EngineInterface, id: string, name: string, fields: Record<string, unknown>) {
+  const dir = `${captures()}/${id}`
+  try {
+    if (!(await $.fs.exists(dir))) return // pruned; writing would bring it back
+    await $.fs.write(`${dir}/${name}`, JSON.stringify({ sessionId: s.sessionId, ...fields, at: await $.clock.now() }))
+  } catch {
+    // A marker is a hint; the capture works without it.
+  }
+}
+
+// The capture's text went with a message, or the person dropped it.
+async function markDone($: EngineInterface, id: string, how: 'sent' | 'removed') {
+  await writeMarker($, id, 'done.json', { how })
 }
 
 async function markActive($: EngineInterface) {
@@ -163,12 +204,18 @@ async function pasteImage($: EngineInterface, png: string): Promise<boolean> {
   return ran.exitCode === 0
 }
 
-async function deliver($: EngineInterface, meta: Meta) {
+function shotFor(meta: Meta): Appshot {
   const shot: Appshot = { ...meta, token: labelFor(meta) }
   delete (shot as Meta).target
+  return shot
+}
+
+async function deliver($: EngineInterface, meta: Meta) {
+  const shot = shotFor(meta)
 
   const bundle = await bringForward($)
   shot.isPasted = bundle === CLAUDE_DESKTOP && meta.png !== undefined && (await pasteImage($, meta.png))
+  await writeMarker($, shot.id, 'delivered.json', { isPasted: shot.isPasted })
   await update($, pending, list => [...asList(list), shot].slice(-10))
   // No toast: the pasted screenshot and the band say it all.
 }
@@ -185,9 +232,19 @@ async function poll($: EngineInterface) {
       const metaPath = `${captures()}/${name}/meta.json`
       if (!(await $.fs.exists(metaPath))) break // still being written
       s.lastSeen = name
+      if (await $.fs.exists(`${captures()}/${name}/done.json`)) continue // already went with a message
       const meta = JSON.parse(await $.fs.read(metaPath)) as Meta
       const isMine = meta.target === undefined ? s.isHost : meta.target === s.sessionId
       if (isMine) await deliver($, meta)
+    }
+    // A waiting appshot that went with a message in another session leaves
+    // this band. Nothing to read when nothing waits.
+    for (const shot of asList(await read($, pending))) {
+      const done = await readJson<Done>($, `${captures()}/${shot.id}/done.json`)
+      if (done === undefined || done.sessionId === s.sessionId) continue
+      await update($, pending, all => asList(all).filter(one => one.id !== shot.id))
+      if ((await read($, shown)) === shot.id) void $.ui.close({ id: TEXT_PANE })
+      $.ui.toast(`${shot.app} appshot went with your message in another session`)
     }
   } finally {
     s.isPolling = false
@@ -204,10 +261,45 @@ async function contextFor($: EngineInterface, shot: Appshot): Promise<string> {
   return formatAppshot(shot, text)
 }
 
+// Captures another session holds whose screenshots this prompt carries: of
+// the newest ten, the pasted, unsent ones, one per image the prompt's own
+// appshots leave unexplained.
+async function claimHandoff($: EngineInterface, own: readonly Appshot[], images: number, ownPasted: number): Promise<Appshot[]> {
+  const names = (await $.fs.list(captures()))
+    .filter(entry => entry.kind === 'dir' && !own.some(shot => shot.id === entry.name))
+    .map(entry => entry.name)
+    .sort()
+    .reverse()
+    .slice(0, 10)
+  const metas = new Map<string, Meta>()
+  const found = await Promise.all(names.map(async (id): Promise<HandoffCandidate | undefined> => {
+    const dir = `${captures()}/${id}`
+    const [meta, delivered, isDone] = await Promise.all([
+      readJson<Meta>($, `${dir}/meta.json`),
+      readJson<Delivered>($, `${dir}/delivered.json`),
+      $.fs.exists(`${dir}/done.json`),
+    ])
+    if (meta === undefined || delivered === undefined) return undefined
+    metas.set(id, meta)
+    return { id, isPasted: delivered.isPasted === true, isDone }
+  }))
+  const candidates = found.filter((one): one is HandoffCandidate => one !== undefined)
+  return chooseHandoff(candidates, images, ownPasted).flatMap(id => {
+    const meta = metas.get(id)
+    return meta === undefined ? [] : [{ ...shotFor(meta), isPasted: true }]
+  })
+}
+
+// "2 image, 1 document", for the debug log.
+function countByType(items: readonly { type: string }[]): string {
+  const counts = new Map<string, number>()
+  for (const item of items) counts.set(item.type, (counts.get(item.type) ?? 0) + 1)
+  return counts.size === 0 ? 'none' : [...counts].map(([type, count]) => `${count} ${type}`).join(', ')
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    s.root = `${await $.env.get('HOME')}/.claude/appshots`
-    s.sessionId = await $.session.id()
+    await ready($)
     await $.command.register({
       name: 'appshot',
       description: 'Send appshots (both Command keys) to this session, and show the helper status',
@@ -230,16 +322,39 @@ export const register: Register = on => {
   })
 
   // Every pending appshot rides the person's next prompt, then is done with.
+  // Images beyond its own pasted appshots claim captures another session
+  // holds: they were pasted here, so their text goes here too.
   on('prompt.submit', async ($, e, next) => {
     if (!PERSON.has(e.origin.kind)) return next(e)
-    if (s.root) void markActive($)
-    const list = asList(await read($, pending))
-    if (list.length === 0) return next(e)
+    await ready($)
+    void markActive($)
+    const attachments = e.attachments ?? []
+    $.ui.log(`appshot: prompt attachments: ${countByType(attachments)}`, { to: 'debug' })
 
-    await update($, pending, () => [])
-    void $.ui.close({ id: TEXT_PANE })
-    const blocks = await Promise.all(list.map(shot => contextFor($, shot)))
+    const own = asList(await read($, pending))
+    const blocks: string[] = []
+    if (own.length > 0) {
+      await update($, pending, () => [])
+      void $.ui.close({ id: TEXT_PANE })
+      blocks.push(...(await Promise.all(own.map(shot => contextFor($, shot)))))
+      await Promise.all(own.map(shot => markDone($, shot.id, 'sent')))
+    }
 
+    const images = attachments.filter(item => item.type === 'image').length
+    const ownPasted = own.filter(shot => shot.isPasted).length
+    if (images > ownPasted && (await $.fs.exists(captures()))) {
+      const claimed = await claimHandoff($, own, images, ownPasted).catch((error: unknown) => {
+        $.ui.log(`appshot: handoff: ${String(error)}`, { to: 'debug' })
+        return []
+      })
+      for (const shot of claimed) {
+        blocks.push(await contextFor($, shot))
+        await markDone($, shot.id, 'sent')
+      }
+      if (claimed.length > 0) $.ui.toast(`Appshot: ${claimed.map(shot => shot.token).join('; ')} came with this message`)
+    }
+
+    if (blocks.length === 0) return next(e)
     return next({ ...e, context: [...(e.context ?? []), ...blocks] })
   }).catch(($, e, next) => next(e)) // never hold up the person's message
 
@@ -272,6 +387,7 @@ export const register: Register = on => {
               dimColor
               onPress={async () => {
                 await update($, pending, all => asList(all).filter(one => one.id !== shot.id))
+                await markDone($, shot.id, 'removed')
                 if ((await read($, shown)) === shot.id) void $.ui.close({ id: TEXT_PANE })
                 $.ui.toast(`${shot.app} appshot text dropped; delete its pasted screenshot too if you do not want it sent`)
               }}
@@ -307,6 +423,7 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'appshot' }, async $ => {
+    await ready($)
     await markActive($)
     const list = asList(await read($, pending))
     return {

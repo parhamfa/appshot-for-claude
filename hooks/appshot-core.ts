@@ -29,3 +29,16 @@ export function formatAppshot(shot: Appshot, text: string): string {
     '</appshot>',
   ].join('\n')
 }
+
+export type HandoffCandidate = { id: string; isPasted: boolean; isDone: boolean }
+
+/** Which waiting captures a prompt carrying `imageCount` images claims: the newest pasted, undone ones, as many as the images not already accounted for by the session's own pasted captures. */
+export function chooseHandoff(candidates: readonly HandoffCandidate[], imageCount: number, ownPastedCount: number): string[] {
+  const spare = Math.max(0, imageCount - ownPastedCount)
+  // Ids start with the capture time (YYYYMMDD-HHMMSS-mmm), so string order is time order.
+  return candidates
+    .filter(one => one.isPasted && !one.isDone)
+    .map(one => one.id)
+    .sort((a, b) => (a < b ? 1 : a > b ? -1 : 0))
+    .slice(0, spare)
+}

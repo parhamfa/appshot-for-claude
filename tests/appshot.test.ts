@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { formatAppshot, INLINE_CHARS, labelFor } from '../hooks/appshot-core'
+import { chooseHandoff, formatAppshot, INLINE_CHARS, labelFor } from '../hooks/appshot-core'
 
 const shot = {
   id: '20261007-120000-000-Safari',
@@ -30,6 +30,38 @@ test('the model gets the screenshot path and the window text, cut when long', ()
   const long = formatAppshot({ ...shot, png: undefined }, 'x'.repeat(INLINE_CHARS + 5))
   expect(long).toContain('No screenshot')
   expect(long).toContain(`first ${INLINE_CHARS} of ${INLINE_CHARS + 5} characters`)
+})
+
+test('a prompt claims the newest pasted, unsent captures its own appshots do not explain', () => {
+  const candidates = [
+    { id: '20261009-141000-000-Safari', isPasted: true, isDone: false },
+    { id: '20261009-141200-000-Notes', isPasted: true, isDone: false },
+    { id: '20261009-141100-000-Mail', isPasted: true, isDone: false },
+  ]
+  expect(chooseHandoff(candidates, 1, 0)).toEqual(['20261009-141200-000-Notes'])
+  expect(chooseHandoff(candidates, 3, 1)).toEqual(['20261009-141200-000-Notes', '20261009-141100-000-Mail'])
+  expect(chooseHandoff(candidates, 5, 0)).toEqual([
+    '20261009-141200-000-Notes',
+    '20261009-141100-000-Mail',
+    '20261009-141000-000-Safari',
+  ])
+})
+
+test('no spare image claims nothing', () => {
+  const candidates = [{ id: '20261009-141000-000-Safari', isPasted: true, isDone: false }]
+  expect(chooseHandoff(candidates, 1, 1)).toEqual([])
+  expect(chooseHandoff(candidates, 1, 2)).toEqual([])
+  expect(chooseHandoff(candidates, 0, 0)).toEqual([])
+})
+
+test('captures not pasted or already done are never claimed', () => {
+  const candidates = [
+    { id: '20261009-141300-000-Notes', isPasted: false, isDone: false },
+    { id: '20261009-141200-000-Mail', isPasted: true, isDone: true },
+    { id: '20261009-141100-000-Safari', isPasted: true, isDone: false },
+  ]
+  expect(chooseHandoff(candidates, 3, 0)).toEqual(['20261009-141100-000-Safari'])
+  expect(chooseHandoff(candidates.slice(0, 2), 2, 0)).toEqual([])
 })
 
 test('a prompt with no appshot waiting passes through untouched', async ($, on) => {
