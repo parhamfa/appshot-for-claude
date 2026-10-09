@@ -1,6 +1,6 @@
 {
   "name": "appshot-for-claude",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Press both Command keys in any Mac app to send that window's screenshot and text to Claude Code.",
   "author": { "name": "Parham Fatemi", "url": "https://github.com/parhamfa" },
   "homepage": "https://github.com/parhamfa/appshot-for-claude",

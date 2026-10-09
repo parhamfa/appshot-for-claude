@@ -10,7 +10,7 @@
       "name": "appshot-for-claude",
       "source": "./",
       "description": "Press both Command keys in any Mac app to send that window's screenshot and text to Claude Code.",
-      "version": "0.1.0"
+      "version": "0.1.1"
     }
   ]
 }
